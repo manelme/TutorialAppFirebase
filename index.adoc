@@ -1,0 +1,596 @@
+////
+NO CAMBIAR!!
+Codificación, idioma, tabla de contenidos, tipo de documento
+////
+:encoding: utf-8
+:lang: es
+:toc: right
+:toc-title: Tabla de contenidos
+:doctype: book
+:imagesdir: ./images
+
+
+
+
+////
+Nombre y título del trabajo
+////
+# Tutorial para el desarrollo de una App Ionic con Firebase
+Desarrollo de Aplicaciones Híbridas 
+Máster TAII - UAL
+
+// NO CAMBIAR!! (Entrar en modo no numerado de apartados)
+:numbered!: 
+
+
+[abstract]
+##  Resumen
+
+En este tutorial estudiaremos las bases para el desarrollo de una aplicación Ionic con Firebase con operaciones CRUD.
+
+.Objetivos
+
+* Aprender a usar un proyecto Firebase como sistema de almacenamiento remoto 
+* Usar las características de actualización automática de clientes tras modificar los valores de la base de datos
+* Crear un servicio que interactue con Firebase
+* Aprender a usar la librería `AngularFire2` para interactuar con Firebase desde Angular
+* Usar la funciones de autenticación en Google para login y logout
+* Aprender personalizar opciones de la aplicación para usuarios autenticados
+* Usar un módulo de presentación de notificaciones
+
+// Entrar en modo numerado de apartados
+:numbered:
+
+## Introducción
+
+Vamos a crear una aplicación Angular para gestionar datos de coches almacenados en Firebase
+
+## Creación del proyecto
+
+[source]
+----
+$ ionic start appIonicFirebase blank
+$ cd appIonicFirebase
+----
+
+### Dependencias
+
+Instalar la https://github.com/angular/angularfire2[librería AngularFire].
+
+[source]
+----
+$ sudo npm install firebase angularfire2 --save
+$ ionic serve
+----
+
+### Componentes de la aplicación
+
+Páginas a crear:
+
+* Home (muestra el listado de coches)
+* Car (muestra un coche)
+
+Servicios (providers)
+
+* Firebase (servicio de interacción con Firebase)
+
+[source]
+----
+$ ionic g page car <1>
+$ ionic g provider firebase
+----
+<1> No olvidar añadir la página a `app.module.ts`
+
+## Creación del proyecto en Firebase
+
+Crearemos un proyecto Firebase denominado `cars` que soporte la base de datos para este ejemplo. Tras crear el proyecto elegiremos la opción de _Añadir Firebase a nuestra aplicación web_. Esto nos proporcionará unos valores que más adelante usaremos para configurar el acceso a este proyecto desde nuestra aplicación.
+
+Una vez creado el proyecto desplegaremos **DEVELOP** para habilitar el acceso a nuestro proyecto Firebase desde nuestra aplicación haciendo lo siguiente:
+
+. En el menú _Database_ activamos nuestra base de datos como _Cloud Firestore_. 
+. Configuraremos las reglas de seguridad en modo de prueba para permitir la lectura y escritura
+. En el menú _Authentication_ configuraremos el método de inicio de sesión y habilitaremos Google como proveedor de inicio de sesión.
+. En el menú _Database_ añadiremos una nueva colección denominada `cars`.
+. Añadiremos los siguientes datos de prueba. 
+
++
+[source]
+----
+[
+    {"marca": "Ford", "modelo": "Mustang V8 5.0", "fabricacion": "USA", "potencia": 464, "velocidadMaxima": 249},
+    {"marca": "Mercedes", "modelo": "S 500", "fabricacion": "Alemania", "potencia": 388, "velocidadMaxima": 260},
+    {"marca": "BMW", "modelo": "M3", "fabricacion": "Alemania", "potencia": 431, "velocidadMaxima": 260}
+]
+----
+
+[NOTE]
+====
+Actualmente, _Cloud Firestore_ no ofrece la opción de cargar datos en Firebase a través de un archivo JSON por lo que hay que introducir los datos manualmente
+====
+
+### Configuración de AngularFire2
+
+En la https://github.com/angular/angularfire2/blob/master/docs/install-and-setup.md[página de AngularFire2 en GitHub] están disponibles las indicaciones para usar AngularFire2. No obstante, haremos algunos cambios.
+
+#### Configuración de las variables de entorno con la configuración de acceso al proyecto Firebase
+
+Los valores de configuración de acceso al proyecto Firebase creado están disponibles en _Project overview_ -> _Añade Firebase a tu aplicación Web_. Estos valores los introduciremos en el archivo `app.module.ts`
+
+.Modificaciones al archivo `app.module.ts`
+====
+[source]
+----
+import { AngularFireModule } from 'angularfire2'; <1>
+import { AngularFireDatabaseModule } from 'angularfire2/database';
+...
+export const config = { <2>
+    apiKey: "AIzaSyD9L-0hoNazxIy2qwP5okIXPQlGY97yBWI",
+    authDomain: "cars-71f59.firebaseapp.com",
+    databaseURL: "https://cars-71f59.firebaseio.com",
+    projectId: "cars-71f59",
+    storageBucket: "cars-71f59.appspot.com",
+    messagingSenderId: "663497383056"
+};
+...
+@NgModule({
+  ...
+  imports: [
+    ...
+    AngularFireModule.initializeApp(config, 'cars'), <3>
+    AngularFireDatabaseModule
+  ],
+  ...
+})
+----
+<1> Importación de módulo básico de Firebase
+<2> Parámetros de acceso a la base de datos Cars en Firebase
+<3> Añadir módulo básico al array `imports`. `config` es el nombre de la constante definida en `app.module.ts` con los valores de conexión. `cars` es el nombre dado en Firebase a la base de datos.
+====
+
+### Creación del modelo para un coche
+
+.El archivo `src/models/car.ts`
+====
+[source]
+----
+export class Car {
+  id: string;
+  marca?: string;
+  modelo?: string;
+  fabricacion?: string;
+  potencia?: number;
+  velocidadMaxima?: number;
+}
+----
+====
+
+
+### Creación de un servicio para Firebase
+
+Al comienzo del tutorial creamos un servicio para Firebase al que denominamos `firebase`. El servicio se encargará de implementar métodos de que interactuen con Firebase para la recuperación de coches, recuperación de los datos de un coche concreto, creación, modificación y eliminación de coches.
+
+[source]
+----
+ionic g provider firebase
+----
+
+.Modificaciones al archivo `app.module.ts` para importar nuestro servicio Firebase
+====
+[source]
+----
+...
+import { FirebaseProvider } from './../providers/firebase/firebase'; <1>
+import { AngularFirestore } from 'angularfire2/firestore';
+import { HttpClientModule } from '@angular/common/http'; <2>
+...
+@NgModule({
+  ...
+  imports: [
+    ...
+    HttpCientModule <3>
+  ],
+  providers: [
+  ...
+  FirebaseProvider, AngularFirestore], <4>
+  ...
+})
+----
+<1> Importar nuestro servicio de Firebase y el módulo de `AngularFirestore`
+<2> Importar `HttpClientModule`
+<3> Añadir `HttpClientModule` al array `imports`
+<4> Añadir nuestro servicio y `AngularFireStore` al array `providers`
+====
+
+A continuación configuramos el servicio para poder trabajar con Firebase y poder devolver observables 
+
+.El archivo del servicio `firebase.service.ts`
+====
+[source]
+----
+import { Car } from './../../models/car'; <1>
+import { AngularFirestore, AngularFirestoreDocument, AngularFirestoreCollection } from 'angularfire2/firestore';
+import { Observable } from 'rxjs/Observable'; <2>
+...
+export class FirebaseProvider {
+  car: Observable<any> <3>
+  cars: Observable<any[]>;
+
+  carsCollection: AngularFirestoreCollection<Car>; <4>
+  carDoc: AngularFirestoreDocument<Car>;
+
+  constructor(public http: HttpClient, private db: AngularFirestore) { <5>
+  }
+
+  getCars() { <6>
+    this.carsCollection = this.db.collection('cars');
+    this.cars = this.carsCollection.snapshotChanges().map(changes => {
+      return changes.map(a => {
+        const data = a.payload.doc.data() as Car;
+        data.id = a.payload.doc.id;
+        return data;
+      });
+    });
+    return this.cars;
+  }
+
+  getCar(id) { <7>
+    this.carDoc = this.db.doc<Car>('cars/'+id);
+    this.car = this.carDoc.valueChanges();
+    return this.car;
+  }
+
+}
+
+----
+<1> Importación del módulo de Firebase y de la clase `Car`
+<2> Importación para poder devolver observables
+<3> Variables de instancia `car` y `cars` como observables para ser devueltas por los métodos y poder accecer posteriomente a sus valores
+<4> Variables de instancia que respresetan a una colección y a un documento Firebase
+<5> Inyección del componente de Firebase para poder acceder a su funcionalidad
+<6> Método para obtener un array de coches de la colección de Firebase. Usamos el método `snapshotChanges()` para poder acceder al `id` de los documentos y así poder manipularlos posteriomente de forma individual.
+<7> Método para obtener el documento de un coche a partir de su `id`
+====
+
+### Obtener el listado de coches
+
+.El archivo `home.ts`
+====
+[source]
+----
+...
+import { CarPage } from './../car/car'; <1>
+import { FirebaseProvider } from './../../providers/firebase/firebase'; <2>
+...
+export class HomePage {
+  cars: any; <3>
+
+  constructor(public navCtrl: NavController, private firebaseProvider: FirebaseProvider) { <4>
+    this.firebaseProvider.getCars().subscribe(cars => { <5>
+      this.cars = cars;
+    })
+  }
+
+  obtenerDetalle(id) { <6>
+    this.navCtrl.push(CarPage, {"id": id});
+  }
+}
+
+----
+<1> Importar la clase `CarPage` para poder ir a la página de detalle
+<2> Importar nuestro servicio Firebase
+<3> Variable instancia para el array de coches
+<4> Inyección de nuestro servicio para poder acceder a su funcionlidad
+<5> Obtener la lista de coches
+<6> Ir a una página de detalle. Sólo le pasamos el `id` para que el acceso a los datos se haga en la carga de la página de detalle.
+====
+
+.El archivo `home.html`
+====
+[source]
+----
+<ion-header>
+  <ion-navbar>
+    <ion-title>
+      Coches <1>
+    </ion-title>
+  </ion-navbar>
+</ion-header>
+
+<ion-content padding>
+ <ion-list>
+   <ion-item *ngFor="let car of cars" (click)="obtenerDetalle(car.id)"> <2>
+     <h1>{{car.marca}} {{car.modelo}}</h1>  <3>
+     <span *ngIf="car.potencia">{{car.potencia}} CV</span>
+     <span *ngIf="car.velocidadMaxima">{{car.velocidadMaxima}} km/h</span>
+     <p>{{car.fabricacion}}</p>
+   </ion-item>
+ </ion-list>
+</ion-content>
+
+----
+<1> Título
+<2> Mostrar los elementos en una lista y configuración de función para obtener detalles en una página aparte. Mediante un bucle crear un elemento `<ion-item>` para cada elemento de la lista devuelta
+<3> Mostrar valores del elemento devuelto.
+====
+
+### Mostrar detalles
+
+
+
+.Modificar el archivo `car.ts`
+====
+[source]
+----
+...
+import { FirebaseProvider } from './../../providers/firebase/firebase'; <1>
+import { Car } from './../../models/car'; <2>
+...
+export class CarPage {
+  car: Car; <3>
+
+  constructor(public navCtrl: NavController, public navParams: NavParams,
+              private firebaseProvider: FirebaseProvider) { <4>
+  }
+
+  ionViewDidLoad() {
+    let id = this.navParams.get("id"); <5>
+    this.firebaseProvider.getCar(id).subscribe(car => { <6>
+      this.car = car;
+    });
+
+  }
+
+}
+----
+<1> Importar el servicio que hemos definido para recuperar coches de Firebase
+<2> Importar la clase coche para que se puedan acceder a sus propiedades desde la vista
+<3> Variables de instancia para manipular el `id` y el coche
+<4> Inyección de dependencias para acceder al servicio Firebase y los detalles del coche seleccionado (necesitamos acceder al valor del parámetro `id`)
+<5> Recuperar el valor del parámetro `id` pasado por la URL
+<6> Recuperar los valores del observable que devuelve el método `getCar()` definido en el servicio
+====
+
+.Modificar el contenido de la plantilla `car.component.html`
+====
+[source]
+----
+<ion-header>
+  <ion-navbar>
+    <ion-title *ngIf="car">{{car.marca}} {{car.modelo}}</ion-title> <1>
+  </ion-navbar>
+</ion-header>
+
+
+<ion-content padding>
+  <ion-item *ngIf="car"> <2>
+    <h1>{{car.marca}} {{car.modelo}}</h1>
+    <h3>Potencia: {{car.potencia}} CV</h3>
+    <h3>Velocidad máxima: {{car.velocidadMaxima}}</h3>
+    <p>País de origen: {{car.fabricacion}}</p>
+  </ion-item>
+</ion-content>
+
+----
+<1> `*ngIf` evita la aparición de mensajes en la consola mientras se recuperan los datos del observable
+<2> Lista de valores de los campos del coche recuperado. Se usa *ngIf` para evitar la aparición de errores mientras se recuperan los datos del observable
+====
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Login y Logout
+
+De acuerdo con la https://github.com/angular/angularfire2/blob/master/docs/auth/getting-started.md[documentación de AngularFire2] para el inicio de sesión con Google, introduciremos estos cambios en el componente TypeScript de la barra de navegación, que es nuestra encargada de hacer el login/logout.
+
+.El archivo `navbar.component.ts`
+====
+[source]
+----
+...
+import { AngularFireAuth } from 'angularfire2/auth'; <1>
+import * as firebase from 'firebase/app';
+...
+export class NavbarComponent implements OnInit {
+
+  constructor(public afAuth: AngularFireAuth) { <2>
+  }
+
+  login() { <3>
+    this.afAuth.auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  }
+  
+  logout() { <4>
+    this.afAuth.auth.signOut();
+  }
+  ...
+}
+----
+<1> Importación de módulos necesarios
+<2> Inyección del módulo de autenticación para acceder a su funcionalidad
+<3> Método de login a través del objeto de AngularFirebase
+<3> Método de logout a través del objeto de AngularFirebase
+====
+
+También añadiremos el comportamiento de Login al botón de la página `Home`.
+
+.El archivo `home.component.ts`
+====
+[source]
+----
+...
+import { AngularFireAuth } from 'angularfire2/auth'; <1> 
+import * as firebase from 'firebase/app';
+...
+export class HomeComponent implements OnInit {
+
+  constructor(public afAuth: AngularFireAuth) { } <2>
+  ...
+  login() { <3>
+    this.afAuth.auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())
+  }
+  ...
+}
+----
+<1> Importar los módulos necesarios de AngulaFire para la autenticación
+<2> Inyección del módulo de autenticación de AngularFire para poder hacer uso de su funcionalidad
+<3> Función de login de acuerdo a la documentación de AngularFire
+====
+
+.El archivo `home.component.html`
+====
+[source]
+----
+<div class = "jumbotron text-center">
+  <div class = "container">
+    <h1>Listado de coches</h1>
+    <p>Los coches más increibles</p>
+    <a (click)="login()"><img src="../assets/img/google.png"></a> <1>
+  </div>
+</div>
+----
+<1> Llamada a la función `login()` al pulsar el botón. Además, se debe quitar el atributo `href` para evitar pantallazo
+====
+
+.Modificar la barra de la derecha en el archivo `navbar.component.html` para agregar el botón de logout y usar las funciones definidas para el manejo de sesión
+====
+[source]
+----
+...
+      <ul class="navbar-nav navbar-right"> 
+        <li class="nav-item active">
+          <a class="nav-link" (click)="login()">Login <span class="sr-only">(current)</span></a>
+        </li>
+        <li class="nav-item ">
+          <a class="nav-link" (click)="logout()">Logout <span class="sr-only">(current)</span></a>
+        </li>
+      </ul>
+...
+----
+====
+
+### Personalización del menú si está iniciada la sesión
+
+Aquí haremos que la opción de logout o login estén disponibles según si está iniciada o no la sesión, respectivamente. Igualmente, las opciones de _Coches_ y _Añadir coches_ sólo aparecerán disponibles en el menú de la izquierda si está iniciada la sesión. Para ello aplicaremos la directiva `*ngIf` sobre cada elemento que queramos mostrar de forma condicional de esta forma:
+
+    *ngIf="(afAuth.authState | async)"
+
+En caso del logout lo haremos negando la expresión.
+
+.Archivo de barra de navegación `navbar.component.html`
+====
+[source]
+----
+
+<nav class="navbar navbar-expand-md navbar-dark bg-dark">
+  <a class="navbar-brand" href="#">Coches</a>
+  <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation">
+    <span class="navbar-toggler-icon"></span>
+  </button>
+  <div class="collapse navbar-collapse" id="navbarCollapse">
+    <ul class="navbar-nav mr-auto navbar-left">
+      <li class="nav-item active">
+        <a class="nav-link" routerLink="">Home <span class="sr-only">(current)</span></a>
+      </li>
+      <li *ngIf="(afAuth.authState | async)" class="nav-item"> <1>
+        <a class="nav-link" routerLink="/cars">Coches</a>
+      </li>
+      <li *ngIf="(afAuth.authState | async)" class="nav-item"> <2>
+        <a class="nav-link" routerLink="/add-car">Añadir coches</a>
+      </li>
+    </ul>
+    <ul class="navbar-nav navbar-right">
+      <li *ngIf="!(afAuth.authState | async)" class="nav-item"> <3>
+        <a class="nav-link" (click)="login()">Login <span class="sr-only">(current)</span></a>
+      </li>
+      <li *ngIf="(afAuth.authState | async)" class="nav-item"> <4>
+        <a class="nav-link" (click)="logout()">Logout <span class="sr-only">(current)</span></a>
+      </li>
+    </ul>
+  </div>
+</nav>
+----
+<1> Mostrar si la sesión está iniciada
+<2> Mostrar si la sesión está iniciada
+<3> Mostrar si la sesión **no** está iniciada
+<4> Mostrar si la sesión está iniciada
+====
+
+### Mostrar un mensaje al cerrar la sesión
+
+Usaremos el módulo `FlashMessagesModule`
+
+.Modificar el archivo `app.module.ts`
+====
+[source]
+----
+...
+import { FlashMessagesModule, FlashMessagesService } from 'angular2-flash-messages'; <1>
+...
+
+@NgModule({
+  ...
+  imports: [
+    ...
+    FlashMessagesModule <2>
+  ],
+  providers: [FirebaseService, AngularFirestore, FlashMessagesService], <3>
+  ...
+})
+...
+----
+<1> Importar `FlashMessagesModule` y `FlashMessagesService`
+<2> Añadir `FlashMessagesModule` al array `imports`
+<3> Añadir `FlashMessagesService` al array `providers`
+====
+
+.Modificar `navbar.component.ts`
+====
+[source]
+----
+....
+import { FlashMessagesService } from 'angular2-flash-messages'; <1>
+....
+export class NavbarComponent implements OnInit {
+  constructor(public afAuth: AngularFireAuth,
+              public flashMessagesService: FlashMessagesService { } <2>
+  ...
+  logout() {
+    this.afAuth.auth.signOut();
+    this.flashMessagesService.show("Sesión cerrada", {cssClass: 'alert-success', timeout: 3000}); <3>
+  }
+  ...
+}
+----
+<1> Importar `FlashMessagesService`
+<2> Inyetar `FlashMessagesService` al constructor para acceder a su funcionalidad
+<3> Mostrar un mensaje durante 3000 ms al hacer el logout
+====
+
+.Añadir el tag del mensaje a `app.component.html`
+====
+[source]
+----
+<app-navbar></app-navbar>
+<div class="container">
+  <flash-messages></flash-messages> <1>
+  <router-outlet></router-outlet>
+</div>
+----
+<1> Selector del mensaje
+====
+
+
